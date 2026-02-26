@@ -16,4 +16,3 @@
    * Разграничение бесплатного и платного доступа
    ### Источники
    * https://www.demandsage.com/chatgpt-statistics/
-   * https://www.similarweb.com/ru/website/chatgpt.com/#technologies
