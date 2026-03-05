@@ -64,7 +64,7 @@
    * Азия ( 40% )
    * Европа ( 20% )
    * Остальной мир ( 10% )
-   ### 3.4 Схема Anycast балансировки
+   ### 3.4 Схема DNS балансировки
    OpenAI использует Anycast DNS (преимущественно через инфраструктуру Cloudflare и Microsoft Azure DNS)
    User - > Запрос на chatgpt.com - >Cloudflare/Azure DNS -> Анализ IP (Геолокация: Германия) -> DNS Response -> Возвращает IP Frankfurt -> Edge Server -> Проверяет нагрузку на бэкенд и пробрасывает запрос на кластер Azure West находящийся в Европе
 
