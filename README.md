@@ -56,11 +56,17 @@
    | chatgpt.com | основной интерфейс |
    | api.chatgpt.com | API | 
    ### 3.2 Расположение дата-центров
-   | ID ДЦ | Локация (страна город) | Обслуживаемый регион |
-   | ----- | ---------------------- | -------------------- |
-   | Virginia | 1 | 1 | 
-   | Arizona | 1 | 1 | 
-   | Texas | 1 | 1 | 
-   | Washington D.C | 1 | 1 |
-   | California | 1 | 1 |
+   Virginia, Arizona, Texas, Washington D.C, California - Здесь находятся датацентры Microsoft Asure, которые арендует openai [Источник](https://observer.com/2024/06/elon-musk-xai-big-tech-data-center-location/#:~:text=Microsoft%20and%20OpenAI:%20OpenAI%20has,Texas%2C%20Washington%20D.C.%20and%20California.)
+   Сингапур - для покрытия Азии ( а людей из Азии на нашей планете очень много ) Через Сингапур проходят десятки подводных оптоволоконных магистралей, связывающих Азию с остальным миром.
+   Франкфурт - для покрытия Европы
+   ### 3.3 Распределение запросов по ДЦ
+   * Северная Америка ( 30% )
+   * Азия ( 40% )
+   * Европа ( 20% )
+   * Остальной мир ( 10% )
+   ### 3.4 Схема Anycast балансировки
+   OpenAI использует Anycast DNS (преимущественно через инфраструктуру Cloudflare и Microsoft Azure DNS)
+   User - > Запрос на chatgpt.com - >Cloudflare/Azure DNS -> Анализ IP (Геолокация: Германия) -> DNS Response -> Возвращает IP Frankfurt -> Edge Server -> Проверяет нагрузку на бэкенд и пробрасывает запрос на кластер Azure West находящийся в Европе
+
+
    
