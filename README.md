@@ -79,4 +79,7 @@
    ### L7 балансировщики (Nginx):
    Занимаются SSL Termination и отправляют на бэкенды по http уже.  
       На беке уже кубер, который оркестрирует контейнерами.
-   
+## 5. Логическая схема БД
+   ### 5.1 Схема БД
+   <img width="985" height="782" alt="image" src="https://github.com/user-attachments/assets/c3bdafb5-73e4-4ef5-892a-cfbd5fddb59f" />
+
