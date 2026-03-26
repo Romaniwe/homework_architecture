@@ -82,7 +82,7 @@
    ### 5.1 Схема БД
    <img width="985" height="782" alt="image" src="https://github.com/user-attachments/assets/c3bdafb5-73e4-4ef5-892a-cfbd5fddb59f" />
 ## 6. Физическая схема БД
-### Распределение таблиц по базам данных
+   ### 6.1 Распределение таблиц по базам данных
 
 | База данных | Тип | Назначение | Таблицы |
 |-------------|-----|------------|---------|
@@ -91,5 +91,45 @@
 | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context` (кэш), `user_sessions` (кэш), `rate_limit_counters` |
 | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`, `dwh_daily_aggregates`, `dwh_moderation_analytics`, `dwh_model_performance`, `dwh_billing_facts`, `dwh_retention_cohorts` |
 | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3` (метаданные), `weight_S3` (метаданные) |
+   ### 6.2 Индексы
+   | Таблица | Индекс | Поля | Тип индекса | Назначение |
+|---------|--------|------|-------------|------------|
+| **users** | `users_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация пользователя |
+| | `idx_users_email` | `email` | UNIQUE B-Tree | Поиск по email при аутентификации |
+| | `idx_users_phone` | `phone` | UNIQUE B-Tree | Поиск по телефону |
+| | `idx_users_created_at` | `created_at` | B-Tree | Аналитика регистраций |
+| | `idx_users_status` | `status` | B-Tree | Фильтрация по статусу |
+| **user_sessions** | `user_sessions_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация сессии |
+| | `idx_user_sessions_token` | `token` | UNIQUE B-Tree | Поиск сессии по токену |
+| | `idx_user_sessions_user_id` | `user_id` | B-Tree | Получение всех сессий пользователя |
+| | `idx_user_sessions_expires_at` | `expires_at` | B-Tree | Очистка просроченных сессий |
+| **api_clients** | `api_clients_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация API клиента |
+| | `idx_api_clients_client_id` | `client_id` | UNIQUE B-Tree | Аутентификация по client_id |
+| | `idx_api_clients_owner_user_id` | `owner_user_id` | B-Tree | Получение клиентов разработчика |
+| | `idx_api_clients_status` | `status` | B-Tree | Фильтрация активных клиентов |
+| | `idx_api_clients_last_used_at` | `last_used_at` | B-Tree | Очистка неиспользуемых клиентов |
+| **api_keys** | `api_keys_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация API ключа |
+| | `idx_api_keys_key_hash` | `key_hash` | UNIQUE B-Tree | Аутентификация по ключу |
+| | `idx_api_keys_user_id` | `user_id` | B-Tree | Получение всех ключей пользователя |
+| | `idx_api_keys_user_id_status` | `user_id, status` | Composite B-Tree | Получение активных ключей пользователя |
+| | `idx_api_keys_expires_at` | `expires_at` | B-Tree | Очистка просроченных ключей |
+| **subscriptions** | `subscriptions_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация подписки |
+| | `idx_subscriptions_user_id` | `user_id` | B-Tree | Получение подписок пользователя |
+| | `idx_subscriptions_user_id_status` | `user_id, status` | Composite B-Tree | Получение активной подписки |
+| | `idx_subscriptions_end_date` | `end_date` | B-Tree | Обработка истекающих подписок |
+| | `idx_subscriptions_start_date` | `start_date` | B-Tree | Аналитика новых подписок |
+| **payment_methods** | `payment_methods_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация способа оплаты |
+| | `idx_payment_methods_user_id` | `user_id` | B-Tree | Получение способов оплаты пользователя |
+| | `idx_payment_methods_subscription_id` | `subscription_id` | B-Tree | Связь подписки со способом оплаты |
+| | `idx_payment_methods_user_id_default` | `user_id, is_default` | Partial B-Tree | Получение основного способа оплаты |
+| **models** | `models_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация модели |
+| | `idx_models_model_code` | `model_code` | UNIQUE B-Tree | Поиск модели по коду |
+| | `idx_models_is_active` | `is_active` | B-Tree | Получение активных моделей |
+| **media_S3** | `media_S3_pkey` | `url` | PRIMARY KEY B-Tree | Поиск медиа по URL |
+| | `idx_media_S3_file_hash` | `file_hash` | B-Tree | Дедупликация файлов |
+| | `idx_media_S3_created_at` | `created_at` | B-Tree | Очистка старых файлов |
+| **weight_S3** | `weight_S3_pkey` | `id` | PRIMARY KEY B-Tree | Идентификация весов |
+| | `idx_weight_S3_model_id` | `model_id` | B-Tree | Получение весов модели |
+| | `idx_weight_S3_version` | `model_id, version` | Composite UNIQUE B-Tree | Уникальность версии модели |
 
 
