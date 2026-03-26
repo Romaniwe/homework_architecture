@@ -87,7 +87,7 @@
 | База данных | Тип | Назначение | Таблицы |
 |-------------|-----|------------|---------|
 | **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `user_sessions`, `subscriptions`, `payment_methods`, `api_clients`, `api_keys`, `models` |
-| **Cassandra / ScyllaDB** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages` |
+| **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages` |
 | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context` (кэш), `user_sessions` (кэш), `rate_limit_counters` |
 | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`, `dwh_daily_aggregates`, `dwh_moderation_analytics`, `dwh_model_performance`, `dwh_billing_facts`, `dwh_retention_cohorts` |
 | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3` (метаданные), `weight_S3` (метаданные) |
