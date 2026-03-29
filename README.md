@@ -80,18 +80,16 @@
    Занимаются SSL Termination и отправляют запросы на бэкенды по http уже.  
 ## 5. Логическая схема БД
    ### 5.1 Схема БД
-   
+   <img width="2688" height="1198" alt="Untitled" src="https://github.com/user-attachments/assets/2e6ea6a4-ddf1-46fb-97df-a2a26717b60a" />
 ## 6. Физическая схема БД
    ### 6.1 Распределение таблиц по базам данных
-   <img width="2688" height="1198" alt="Untitled" src="https://github.com/user-attachments/assets/2e6ea6a4-ddf1-46fb-97df-a2a26717b60a" />
-
-| База данных | Тип | Назначение | Таблицы |
-|-------------|-----|------------|---------|
-| **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `subscriptions`, `payment_methods`, `api_clients`, `models` |
-| **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages`,`api_keys` |
-| **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context` (кэш), `user_sessions` (кэш), `rate_limit_counters` |
-| **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`, `dwh_daily_aggregates`, `dwh_moderation_analytics`, `dwh_model_performance`, `dwh_billing_facts`, `dwh_retention_cohorts` |
-| **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3` (метаданные), `weight_S3` (метаданные) |
+   | База данных | Тип | Назначение | Таблицы |
+   |-------------|-----|------------|---------|
+   | **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `subscriptions`, `payment_methods`, `api_clients`, `models` |
+   | **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages`,`api_keys` |
+   | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context` (кэш), `user_sessions` (кэш), `rate_limit_counters` |
+   | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`, `dwh_daily_aggregates`, `dwh_moderation_analytics`, `dwh_model_performance`, `dwh_billing_facts`, `dwh_retention_cohorts` |
+   | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3` (метаданные), `weight_S3` (метаданные) |
    ### 6.2 Индексы
    | Таблица | Состав индекса | Пояснение |
    |---------|----------------|-----------|
