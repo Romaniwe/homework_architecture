@@ -105,4 +105,13 @@
    | subscriptions | 1) user_id, status<br>2) end_date<br>3) user_id, start_date | Получение активной подписки пользователя, обработка истекающих подписок, аналитика новых подписок |
    | payment_methods | 1) user_id<br>2) user_id, is_default<br>3) subscription_id | Получение способов оплаты пользователя, получение основного способа оплаты, связь подписки со способом оплаты |
    | models | 1) model_type<br>2) is_active | Поиск модели по коду (gpt-4, gpt-3.5-turbo), получение активных моделей |
-  
+
+   | Таблица | Состав индекса | Тип индекса | Пояснение |
+   |---------|----------------|--------------|-----------|
+   | **users** | 1) `email`<br>2) `phone`<br>3) `id` | 1) UNIQUE B-Tree<br>2) UNIQUE B-Tree<br>3) PRIMARY KEY B-Tree | Поиск пользователя по email и телефону при аутентификации, primary key |
+   | **user_sessions** | 1) `token`<br>2) `user_id, expires_at`<br>3) `expires_at` | 1) UNIQUE B-Tree<br>2) Composite B-Tree<br>3) B-Tree | Поиск сессии по токену, получение сессий пользователя с фильтром по сроку, очистка просроченных сессий |
+   | **api_clients** | 1) `client_id`<br>2) `owner_user_id`<br>3) `status, last_used_at` | 1) UNIQUE B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Аутентификация API клиента, получение клиентов разработчика, очистка неактивных клиентов |
+   | **api_keys** | 1) `key_hash`<br>2) `user_id, status`<br>3) `expires_at` | 1) UNIQUE B-Tree<br>2) Composite B-Tree<br>3) B-Tree | Аутентификация по API-ключу, получение активных ключей пользователя, очистка просроченных ключей |
+   | **subscriptions** | 1) `user_id, status`<br>2) `end_date`<br>3) `user_id, start_date` | 1) Composite B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Получение активной подписки пользователя, обработка истекающих подписок, аналитика новых подписок |
+   | **payment_methods** | 1) `user_id`<br>2) `user_id, is_default`<br>3) `subscription_id` | 1) B-Tree<br>2) Partial B-Tree<br>3) B-Tree | Получение способов оплаты пользователя, получение основного способа оплаты, связь подписки со способом оплаты |
+   | **models** | 1) `model_type`<br>2) `is_active` | 1) UNIQUE B-Tree<br>2) B-Tree | Поиск модели по коду (gpt-4, gpt-3.5-turbo), получение активных моделей |
