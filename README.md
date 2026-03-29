@@ -83,6 +83,7 @@
    <img width="2688" height="1198" alt="Untitled" src="https://github.com/user-attachments/assets/2e6ea6a4-ddf1-46fb-97df-a2a26717b60a" />
 ## 6. Физическая схема БД
    ### 6.1 Распределение таблиц по базам данных
+   
    | База данных | Тип | Назначение | Таблицы |
    |-------------|-----|------------|---------|
    | **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `subscriptions`, `payment_methods`, `api_clients`, `models` |
