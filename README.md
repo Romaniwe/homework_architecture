@@ -80,9 +80,9 @@
    Занимаются SSL Termination и отправляют запросы на бэкенды по http уже.  
 ## 5. Логическая схема БД
    ### 5.1 Схема БД
-   
-   <img width="2688" height="1198" alt="Untitled" src="https://github.com/user-attachments/assets/2e6ea6a4-ddf1-46fb-97df-a2a26717b60a" />
-   
+
+   <img width="2485" height="1224" alt="Untitled (1)" src="https://github.com/user-attachments/assets/ce6718ce-1f04-4541-8c9a-ef3f589cdf20" />
+ 
 ## 6. Физическая схема БД
    ### 6.1 Распределение таблиц по базам данных
    
@@ -90,7 +90,19 @@
    |-------------|-----|------------|---------|
    | **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `subscriptions`, `payment_methods`, `api_clients`, `models` |
    | **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages`,`api_keys` |
-   | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context` (кэш), `user_sessions` (кэш), `rate_limit_counters` |
-   | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`, `dwh_daily_aggregates`, `dwh_moderation_analytics`, `dwh_model_performance`, `dwh_billing_facts`, `dwh_retention_cohorts` |
-   | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3` (метаданные), `weight_S3` (метаданные) |
+   | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context`, `user_sessions` |
+   | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`|
+   | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3`, `weight_S3`|
+
+   ### 6.2 Индексы
+
+   | Таблица | Состав индекса | Пояснение |
+   |---------|----------------|-----------|
+   | users | 1) email<br>2) phone<br>3) id | Поиск пользователя по email и телефону при аутентификации, primary key |
+   | user_sessions | 1) token<br>2) user_id, expires_at<br>3) expires_at | Поиск сессии по токену, получение сессий пользователя с фильтром по сроку, очистка просроченных сессий |
+   | api_clients | 1) client_id<br>2) owner_user_id<br>3) status, last_used_at | Аутентификация API клиента, получение клиентов разработчика, очистка неактивных клиентов |
+   | api_keys | 1) key_hash<br>2) user_id, status<br>3) expires_at | Аутентификация по API-ключу, получение активных ключей пользователя, очистка просроченных ключей |
+   | subscriptions | 1) user_id, status<br>2) end_date<br>3) user_id, start_date | Получение активной подписки пользователя, обработка истекающих подписок, аналитика новых подписок |
+   | payment_methods | 1) user_id<br>2) user_id, is_default<br>3) subscription_id | Получение способов оплаты пользователя, получение основного способа оплаты, связь подписки со способом оплаты |
+   | models | 1) model_type<br>2) is_active | Поиск модели по коду (gpt-4, gpt-3.5-turbo), получение активных моделей |
   
