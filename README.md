@@ -80,7 +80,9 @@
    Занимаются SSL Termination и отправляют запросы на бэкенды по http уже.  
 ## 5. Логическая схема БД
    ### 5.1 Схема БД
+   
    <img width="2688" height="1198" alt="Untitled" src="https://github.com/user-attachments/assets/2e6ea6a4-ddf1-46fb-97df-a2a26717b60a" />
+   
 ## 6. Физическая схема БД
    ### 6.1 Распределение таблиц по базам данных
    
