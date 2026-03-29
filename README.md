@@ -95,7 +95,8 @@
    | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3`, `weight_S3`|
 
    ### 6.2 Индексы
-
+   
+   
    | Таблица | Состав индекса | Тип индекса | Пояснение |
    |---------|----------------|--------------|-----------|
    | **users** | 1) `email`<br>2) `phone`<br>3) `id` | 1) UNIQUE B-Tree<br>2) UNIQUE B-Tree<br>3) PRIMARY KEY B-Tree | Поиск пользователя по email и телефону при аутентификации, primary key |
@@ -105,3 +106,5 @@
    | **subscriptions** | 1) `user_id, status`<br>2) `end_date`<br>3) `user_id, start_date` | 1) Composite B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Получение активной подписки пользователя, обработка истекающих подписок, аналитика новых подписок |
    | **payment_methods** | 1) `user_id`<br>2) `user_id, is_default`<br>3) `subscription_id` | 1) B-Tree<br>2) Partial B-Tree<br>3) B-Tree | Получение способов оплаты пользователя, получение основного способа оплаты, связь подписки со способом оплаты |
    | **models** | 1) `model_type`<br>2) `is_active` | 1) UNIQUE B-Tree<br>2) B-Tree | Поиск модели по коду (gpt-4, gpt-3.5-turbo), получение активных моделей |
+   | **chats** | `((user_id), chat_id)` | Compound (Partition: `user_id`) | Получение всех диалогов пользователя, отсортированных по ID чата. |
+   | **messages** | `((chat_id), msg_id)` | Compound (Partition: `chat_id`) | Хранение истории переписки; сообщения внутри чата упорядочены по ID. |
