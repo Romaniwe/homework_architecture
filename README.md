@@ -80,14 +80,14 @@
    Занимаются SSL Termination и отправляют запросы на бэкенды по http уже.  
 ## 5. Логическая схема БД
    ### 5.1 Схема БД
-   <img width="985" height="782" alt="image" src="https://github.com/user-attachments/assets/c3bdafb5-73e4-4ef5-892a-cfbd5fddb59f" />
+   <iframe width="560" height="315" src='https://dbdiagram.io/e/69c90ffdfb2db18e3b2c58b6/69c9111efb2db18e3b2c5f06'> </iframe>
 ## 6. Физическая схема БД
    ### 6.1 Распределение таблиц по базам данных
 
 | База данных | Тип | Назначение | Таблицы |
 |-------------|-----|------------|---------|
-| **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `user_sessions`, `subscriptions`, `payment_methods`, `api_clients`, `api_keys`, `models` |
-| **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages` |
+| **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `subscriptions`, `payment_methods`, `api_clients`, `models` |
+| **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages`,`api_keys` |
 | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context` (кэш), `user_sessions` (кэш), `rate_limit_counters` |
 | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`, `dwh_daily_aggregates`, `dwh_moderation_analytics`, `dwh_model_performance`, `dwh_billing_facts`, `dwh_retention_cohorts` |
 | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3` (метаданные), `weight_S3` (метаданные) |
