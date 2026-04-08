@@ -138,6 +138,8 @@
    | Cassandra | gocql | 
    | Redis | go-redis |
    | ClickHouse | clickhouse-go |
-   | S3 | minio-go | 
+   | S3 | minio-go |
+   
+## 7. Алгоритмы
 
    
