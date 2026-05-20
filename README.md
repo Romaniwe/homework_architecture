@@ -81,9 +81,8 @@
 ## 5. Логическая схема БД
    ### 5.1 Схема БД
 
-   <img width="2485" height="1224" alt="Untitled (1)" src="https://github.com/user-attachments/assets/ce6718ce-1f04-4541-8c9a-ef3f589cdf20" />
-   <iframe width="560" height="315" src='https://dbdiagram.io/e/69c90ffdfb2db18e3b2c58b6/69c9111efb2db18e3b2c5f06'> </iframe>
-   https://dbdiagram.io/d/69c90ffdfb2db18e3b2c58b6
+   <img width="1632" height="4138" alt="Untitled (3)" src="https://github.com/user-attachments/assets/f6889b7f-9a14-408a-b2ca-fd96de1e7368" />
+
  
 ## 6. Физическая схема БД
    ### 6.1 Распределение таблиц по базам данных
@@ -191,6 +190,11 @@
 | Pytest / Unittest | Модульное тестирование Python кода | Проверка корректности токенизации и подготовки промптов |
 | Testcontainers | Интеграционное тестирование | Библиотека, которая запускает реальные БД и сервисы в Docker-контейнерах прямо во время теста |
 
+   ## 10. Cхема проекта
+   
+   <img width="3891" height="2896" alt="СХЕМА Проекта vers1" src="https://github.com/user-attachments/assets/9994346e-4f6e-45e4-ac25-1238325615cf" />
+
+   
    ## 11. Список серверов
 
 ### 11.1 Модель развёртывания
