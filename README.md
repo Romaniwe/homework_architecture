@@ -82,6 +82,7 @@
    ### 5.1 Схема БД
 
    <img width="2485" height="1224" alt="Untitled (1)" src="https://github.com/user-attachments/assets/ce6718ce-1f04-4541-8c9a-ef3f589cdf20" />
+   <iframe width="560" height="315" src='https://dbdiagram.io/e/69c90ffdfb2db18e3b2c58b6/69c9111efb2db18e3b2c5f06'> </iframe>
  
 ## 6. Физическая схема БД
    ### 6.1 Распределение таблиц по базам данных
