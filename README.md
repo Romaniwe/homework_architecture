@@ -1,3 +1,4 @@
+<img width="4651" height="3442" alt="СХЕМА Проекта vers2" src="https://github.com/user-attachments/assets/b1be6caa-b835-4052-a2b8-6795b6bcbc87" />
 # Проектирование высоконагруженного аналога chat GPT
 ## 1. Тема и целевая аудитория
    ### 1.1 Описание сервиса
@@ -191,10 +192,9 @@
 | Testcontainers | Интеграционное тестирование | Библиотека, которая запускает реальные БД и сервисы в Docker-контейнерах прямо во время теста |
 
    ## 10. Cхема проекта
-   
-   <img width="3891" height="2896" alt="СХЕМА Проекта vers1" src="https://github.com/user-attachments/assets/9994346e-4f6e-45e4-ac25-1238325615cf" />
 
-   
+   <img width="4651" height="3442" alt="СХЕМА Проекта vers2" src="https://github.com/user-attachments/assets/228592d0-884d-46d9-836f-9858dc4013af" />
+
    ## 11. Список серверов
 
 ### 11.1 Модель развёртывания
