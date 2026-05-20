@@ -1,4 +1,4 @@
-<img width="4651" height="3442" alt="СХЕМА Проекта vers2" src="https://github.com/user-attachments/assets/b1be6caa-b835-4052-a2b8-6795b6bcbc87" />
+
 # Проектирование высоконагруженного аналога chat GPT
 ## 1. Тема и целевая аудитория
    ### 1.1 Описание сервиса
