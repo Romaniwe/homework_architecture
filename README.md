@@ -90,48 +90,88 @@
    
    | База данных | Тип | Назначение | Таблицы |
    |-------------|-----|------------|---------|
-   | **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `subscriptions`, `payment_methods`, `api_clients`, `models` |
-   | **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `messages`,`api_keys` |
-   | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `chat_context`, `user_sessions` |
-   | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_usage_facts`|
+   | **PostgreSQL (OLTP)** | Реляционная, ACID | Основные бизнес-данные, требующие транзакционности | `users`, `user_sessions`, `api_clients`, `api_keys`, `api_sessions`, `subscriptions`, `payment_methods`, `invoices`, `model_families`, `model_versions`, `model_deployments`, `fine_tuning_jobs`, `training_datasets`, `user_attachments`, `token_usage`, `usage_quotas`, `message_embeddings`, `search_index_jobs` |
+   | **Cassandra** | NoSQL, Wide-Column | Сообщения и чаты (огромная нагрузка на запись/чтение) | `chats`, `user_messages`, `assistant_responses`, `message_contexts`, `search_snapshots` |
+   | **Redis** | In-Memory Key-Value | Кеш контекста, сессии, rate limiting | `hot counters (usage:*)`, `сессии (session:*)`, `pub/sub стримов (stream:resp:*)`, `кеш контекста (ctx:msg:*)`, `prefix_cache моделей`|
+   | **ClickHouse** | Колоночная OLAP | Аналитика, DWH | `dwh_session_events`, `dwh_chat_events`, `dwh_message_events`, `dwh_token_events`, `dwh_click_events` |
+   | **Qdrant** | Векторная БД | Семантический поиск | `message_embeddings` |
+   | **Elasticsearch** | Поисковая БД | Полнотекстовый поиск | `полнотекстовый индекс сообщений и ответов` |
    | **S3 / Object Storage** | Объектное хранилище | Медиафайлы, веса моделей | `media_S3`, `weight_S3`|
 
    ### 6.2 Индексы
-      
+
    | Таблица | Состав индекса | Тип индекса | Пояснение |
-   |---------|----------------|--------------|-----------|
-   | **users** | 1) `email`<br>2) `phone`<br>3) `id` | 1) UNIQUE B-Tree<br>2) UNIQUE B-Tree<br>3) PRIMARY KEY B-Tree | Поиск пользователя по email и телефону при аутентификации, primary key |
-   | **user_sessions** | 1) `token`<br>2) `user_id, expires_at`<br>3) `expires_at` | 1) UNIQUE B-Tree<br>2) Composite B-Tree<br>3) B-Tree | Поиск сессии по токену, получение сессий пользователя с фильтром по сроку, очистка просроченных сессий |
-   | **api_clients** | 1) `client_id`<br>2) `owner_user_id`<br>3) `status, last_used_at` | 1) UNIQUE B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Аутентификация API клиента, получение клиентов разработчика, очистка неактивных клиентов |
-   | **api_keys** | 1) `key_hash`<br>2) `user_id, status`<br>3) `expires_at` | 1) UNIQUE B-Tree<br>2) Composite B-Tree<br>3) B-Tree | Аутентификация по API-ключу, получение активных ключей пользователя, очистка просроченных ключей |
-   | **subscriptions** | 1) `user_id, status`<br>2) `end_date`<br>3) `user_id, start_date` | 1) Composite B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Получение активной подписки пользователя, обработка истекающих подписок, аналитика новых подписок |
-   | **payment_methods** | 1) `user_id`<br>2) `user_id, is_default`<br>3) `subscription_id` | 1) B-Tree<br>2) Partial B-Tree<br>3) B-Tree | Получение способов оплаты пользователя, получение основного способа оплаты, связь подписки со способом оплаты |
-   | **models** | 1) `model_type`<br>2) `is_active` | 1) UNIQUE B-Tree<br>2) B-Tree | Поиск модели по коду (gpt-4, gpt-3.5-turbo), получение активных моделей |
-   | **chats** | `((user_id), chat_id)` | Compound (Partition: `user_id`) | Получение всех диалогов пользователя, отсортированных по ID чата |
-   | **messages** | `((chat_id), msg_id)` | Compound (Partition: `chat_id`) | Хранение истории переписки; сообщения внутри чата упорядочены по ID |
+   |---------|----------------|-------------|-----------|
+   | **users** (`auth_db`) | 1) `email`<br>2) `phone`<br>3) `id` | 1) UNIQUE B-Tree<br>2) UNIQUE B-Tree<br>3) PRIMARY KEY B-Tree | Поиск по email и телефону при аутентификации, primary key для join'ов |
+   | **user_sessions** (`auth_db`) | 1) `token_hash`<br>2) `user_id, expires_at`<br>3) `expires_at` | 1) UNIQUE B-Tree<br>2) Composite B-Tree<br>3) B-Tree | Lookup сессии по токену, активные сессии пользователя, batch-очистка просроченных |
+   | **api_clients** (`auth_db`) | 1) `id`<br>2) `owner_user_id`<br>3) `status, last_used_at` | 1) PRIMARY KEY B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Аутентификация клиента, список клиентов разработчика, выявление неактивных |
+   | **api_keys** (`auth_db`) | 1) `key_hash`<br>2) `api_client_id, status`<br>3) `expires_at` | 1) UNIQUE B-Tree<br>2) Composite B-Tree<br>3) B-Tree | Аутентификация по ключу, активные ключи клиента, очистка просроченных |
+   | **api_sessions** (`auth_db`) | 1) `api_key_id, started_at`<br>2) `user_id, started_at` | 1) Composite B-Tree<br>2) Composite B-Tree | Аудит сессий по ключу и по пользователю |
+   | **subscriptions** (`billing_db`) | 1) `user_id, status`<br>2) `end_date`<br>3) `user_id, start_date` | 1) Composite B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Активная подписка пользователя, обработка истекающих, аналитика конверсий |
+   | **payment_methods** (`billing_db`) | 1) `user_id`<br>2) `user_id` WHERE `is_default=true`<br>3) `subscription_id` | 1) B-Tree<br>2) Partial B-Tree<br>3) B-Tree | Способы оплаты, основной метод, связь с подпиской |
+   | **token_usage** (`billing_db`) | 1) `user_id, billing_period`<br>2) `billing_period`<br>3) `api_key_id, billing_period` | 1) Composite B-Tree<br>2) B-Tree (партиция)<br>3) Composite B-Tree | Агрегация для инвойсов, отчёты периода, биллинг по ключу. Таблица партиционирована по `billing_period` |
+   | **usage_quotas** (`billing_db`) | 1) `user_id, quota_period, period_start`<br>2) `is_exceeded` WHERE `is_exceeded=true` | 1) Composite UNIQUE B-Tree<br>2) Partial B-Tree | Текущая квота пользователя, быстрая выборка превысивших лимит |
+   | **user_attachments** (`files_db`) | 1) `user_message_id`<br>2) `user_id, created_at`<br>3) `file_hash_sha256`<br>4) `av_scan_status` WHERE `av_scan_status='pending'`<br>5) `expires_at` | 1) B-Tree<br>2) Composite B-Tree<br>3) B-Tree<br>4) Partial B-Tree<br>5) B-Tree | Файлы сообщения, файлы пользователя, дедупликация, AV-очередь, GDPR-удаление |
+   | **model_families** (`model_db`) | 1) `family_code`<br>2) `is_public` WHERE `is_public=true` | 1) UNIQUE B-Tree<br>2) Partial B-Tree | Поиск по коду семейства, выборка публичных моделей для UI |
+   | **model_versions** (`model_db`) | 1) `version_code`<br>2) `family_id, status`<br>3) `base_version_id` | 1) UNIQUE B-Tree<br>2) Composite B-Tree<br>3) B-Tree | Lookup версии, production-версии семейства, дерево fine-tune происхождения |
+   | **model_deployments** (`model_db`) | 1) `model_version_id, status`<br>2) `region, status` | 1) Composite B-Tree<br>2) Composite B-Tree | Активные deployments версии, deployments в регионе для маршрутизации |
+   | **fine_tuning_jobs** (`model_db`) | 1) `owner_user_id, created_at`<br>2) `status` WHERE `status IN ('queued','running')`<br>3) `base_version_id` | 1) Composite B-Tree<br>2) Partial B-Tree<br>3) B-Tree | История заданий пользователя, активные задания для scheduler, потомки базовой модели |
+   | **message_embeddings** (`search_meta_db`) | 1) `source_type, source_id`<br>2) `chat_id`<br>3) `user_id, created_at` | 1) Composite UNIQUE B-Tree<br>2) B-Tree<br>3) Composite B-Tree | Lookup эмбеддинга по источнику, эмбеддинги чата для RAG, индексация per-user |
+   | **search_index_jobs** (`search_meta_db`) | 1) `status, enqueued_at` WHERE `status='queued'`<br>2) `source_type, source_id` | 1) Partial B-Tree<br>2) Composite B-Tree | Очередь индексации, retry для конкретного источника |
+   | **chats** (`chat_keyspace`) | Partition: `user_id`<br>Clustering: `last_activity_at DESC, chat_id` | Compound (Cassandra) | Список чатов пользователя, отсортированных по последней активности. Чтение одной партиции = один узел |
+   | **user_messages** (`chat_keyspace`) | Partition: `chat_id`<br>Clustering: `created_at, id` | Compound (Cassandra) | История переписки чата, упорядоченная по времени. Write-once, без UPDATE |
+   | **assistant_responses** (`chat_keyspace`) | Partition: `user_message_id`<br>Clustering: `version DESC` | Compound (Cassandra) | Ответы на сообщение, включая альтернативы (regenerate). Primary version — первая в выдаче |
+   | **message_contexts** (`chat_keyspace`) | Partition: `user_message_id` | Compound (Cassandra) | Снимок контекста, отправленного в модель. 1-к-1 с user_message |
+   | **dwh_message_events** (`dwh_db`) | `PARTITION BY toYYYYMMDD(event_time)`<br>`ORDER BY (event_type, event_time, user_id)` | MergeTree (ClickHouse) | Партиционирование по дням для эффективного TTL и дроп старых партов; сортировка под типовые `GROUP BY event_type` |
+   | **dwh_token_events** (`dwh_db`) | `PARTITION BY toYYYYMM(event_time)`<br>`ORDER BY (user_id, event_time)` | AggregatingMergeTree | Месячное партиционирование для биллинга; pre-aggregation materialized view сверху для invoice generation |
+   | **msg_embeddings** (Qdrant) | Vector index | HNSW (M=16, ef_construct=200) | Approximate nearest neighbor по семантике, recall@10 ≈ 98% при latency P99 5–15 мс на шарде |
+   | **messages-YYYY-MM** (Elasticsearch) | Inverted index по `text`<br>Filter index по `user_id` (routing) | Lucene inverted + keyword | Полнотекстовый поиск с фильтром по пользователю. Routing по `user_id` направляет запрос на один шард |
 
    ### 6.3 Шардирование
    
-   | СУБД | Таблица | Ключ шардирования | Пояснение |
-   |------|---------|-------------------|-----------|
-   | **PostgreSQL** | `users` | `id` | Все запросы к профилю, подпискам и платежам выполняются в контексте `user_id`, что позволяет локализовать данные на одном шарде |
-   | **PostgreSQL** | `subscriptions` | `user_id` | Подписки всегда запрашиваются вместе с пользователем. Шардирование по `user_id` позволяет хранить подписку на том же шарде, что и пользователя |
-   | **PostgreSQL** | `payment_methods` | `user_id`| Способы оплаты привязаны к пользователю. Локализация данных на одном шарде с пользователем для быстрых запросов при оплате |
-   | **PostgreSQL** | `api_clients` | `owner_user_id` | API клиенты распределяются равномерно |
-   | **Cassandra** | `chats` | `user_id` | Все чаты одного пользователя хранятся на одном узле. Это обеспечивает быструю загрузку списка диалогов пользователя |
-   | **Cassandra** | `messages` | `chat_id` | Все сообщения одного чата хранятся на одном узле. Позволяет эффективно подгружать историю переписки |
-   | **Cassandra** | `api_keys` | `user_id` | API ключи пользователя хранятся на одном узле с его чатами |
-   | **Redis** | `chat_context` | `chat_id` | Контекст диалога шардируется по `chat_id`. Контекст одного чата всегда находится на одном Redis-узле |
-   | **Redis** | `user_sessions` | `token` | Сессии шардируются по токену для равномерного распределения нагрузки. Проверка сессии при каждом запросе выполняется на одном узле |
+   | СУБД / БД | Таблица | Ключ шардирования | Пояснение |
+   |-----------|---------|-------------------|-----------|
+   | **PostgreSQL — `auth_db`** | `users` | `id` | Все запросы к профилю, сессиям, API-ключам выполняются в контексте `user_id`. Шардирование по `id` локализует все связанные данные пользователя на одном шарде. |
+   | **PostgreSQL — `auth_db`** | `user_sessions` | `user_id` | Сессии запрашиваются вместе с пользователем (refresh-токены, аудит). Шард совпадает с шардом users — нет cross-shard join'ов. |
+   | **PostgreSQL — `auth_db`** | `api_clients` | `owner_user_id` | API-клиенты разработчика лежат рядом с самим разработчиком. При rotation ключей и листинге клиентов — один шард. |
+   | **PostgreSQL — `auth_db`** | `api_keys` | `api_client_id` | Ключи живут рядом со своим клиентом. Lookup по `key_hash` использует глобальный consistent-hash routing на уровне приложения. |
+   | **PostgreSQL — `auth_db`** | `api_sessions` | `api_key_id` | Аудит сессий ключа — локально |
+   | **PostgreSQL — `billing_db`** | `subscriptions` | `user_id` | Подписки всегда запрашиваются вместе с пользователем. Co-location с биллинговыми данными для транзакционности при апгрейде/даунгрейде тарифа. |
+   | **PostgreSQL — `billing_db`** | `payment_methods` | `user_id` | Способы оплаты привязаны к пользователю. Транзакция «списать с карты + продлить подписку» проходит в рамках одного шарда. |
+   | **PostgreSQL — `billing_db`** | `invoices` | `user_id` | Инвойсы пользователя локализованы. Биллинговые отчёты строятся по шардам параллельно. |
+   | **PostgreSQL — `billing_db`** | `usage_quotas` | `user_id` | Квоты пользователя на одном шарде с подпиской — атомарная проверка лимита при обработке запроса. |
+   | **PostgreSQL — `billing_db`** | `token_usage` | `user_id`, доп. партиционирование по `billing_period` | Шардирование по `user_id` + локальное партиционирование по месяцу. Это даёт быстрый месячный rollup для инвойса без cross-shard scan. |
+   | **PostgreSQL — `files_db`** | `user_attachments` | `user_id` | Файлы пользователя локализованы для GDPR-удаления и list-операций. |
+   | **PostgreSQL — `model_db`** | `model_families`, `model_versions`, `model_deployments` | **Без шардирования** | Объём данных мал (десятки тысяч строк). Полная репликация на все PG-узлы + read-through кеш в `model_cache` (Redis). Любой Inference Scheduler читает локально без round-trip. |
+   | **PostgreSQL — `model_db`** | `fine_tuning_jobs` | `owner_user_id` | Задания клиента локализованы для list-API и квот на одновременное обучение. |
+   | **PostgreSQL — `search_meta_db`** | `message_embeddings`, `search_index_jobs` | `user_id` | Совпадает с шардом всех пользовательских данных. Поиск всегда per-user. |
+   | **Cassandra — `chat_keyspace`** | `chats` | Partition: `user_id` | Все чаты одного пользователя — на одной партиции (физически на одном узле в рамках replication set). Список диалогов с сортировкой по `last_activity_at DESC` читается одним запросом. |
+   | **Cassandra — `chat_keyspace`** | `user_messages` | Partition: `chat_id` | Все сообщения одного чата — на одной партиции. История чата выгружается одним range-scan'ом по clustering key `created_at`. Consistent hashing распределяет чаты по узлам кластера равномерно. |
+   | **Cassandra — `chat_keyspace`** | `assistant_responses` | Partition: `user_message_id` | Все версии ответа на одно сообщение (regenerate) — рядом. Чтение primary version и альтернатив — один запрос. |
+   | **Cassandra — `chat_keyspace`** | `message_contexts` | Partition: `user_message_id` | Контекст лежит рядом с сообщением и ответом. Для regenerate всё доступно локально. |
+   | **Cassandra — `chat_keyspace`** | `search_snapshots` | Partition: `user_message_id` | Снимок web-search идёт в паре с сообщением. |
+   | **Redis — `auth_cache`** | `session:{token_hash}` | Hash slot от `token_hash` | Redis Cluster делит 16384 hash slots между мастер-узлами. Routing по slot выполняется клиентской библиотекой без proxy. |
+   | **Redis — `quota_counters`** | `usage:user:{id}:*`, `quota:user:{id}` | Hash slot от `user:{id}` (hash tag) | Все счётчики одного пользователя через `{user:id}` hash tag попадают в один slot — атомарные multi-key операции (`MULTI/EXEC`) работают локально. |
+   | **Redis — `chat_cache`** | `ctx:msg:{user_message_id}`, `stream:resp:{response_id}` | Hash slot от ключа | Pub/sub-канал стриминга и кеш контекста — на одном slot'е через hash tag по `chat_id`, чтобы subscriber Chat Service и publisher vLLM попадали на один узел. |
+   | **Redis — `model_cache`** | `model:family:*`, `model:version:*`, `model:deployments:active` | Hash slot (но фактически full replication) | Данных мало (~МБ), удобнее реплицировать на каждый узел кластера и читать локально. Invalidation через pub/sub `model_config_changed`. |
+   | **Redis — `inf_cache`** | `prefix_cache:{prompt_hash}` | Hash slot от `prompt_hash` | Равномерное распределение горячих префиксов системных промптов между узлами. |
+   | **ClickHouse — `dwh_db`** | все `dwh_*_events` | `cityHash64(user_id) % N_shards` | Distributed-таблица поверх локальных `MergeTree`. Запросы аналитиков обычно фильтруют по диапазону дат + опционально `user_id`. Партиционирование по дате (внутри шарда) + сортировка по `(event_type, event_time)` дают эффективный pruning. |
+   | **Qdrant — `vector_index`** | collection `msg_embeddings` | `user_id` (sharding key в payload) | HNSW-индекс per-shard. Запрос с фильтром `user_id == X` маршрутизируется на один шард — без fan-out по всему кластеру. |
+   | **Elasticsearch — `fulltext_index`** | индексы `messages-YYYY-MM` | `user_id` (custom routing) | Routing parameter `?routing=user_id` направляет запрос на один шард. Без этого ES выполнил бы scatter-gather по всем 200 шардам индекса — недопустимо при таком объёме. |
+   | **S3** | `user_uploads_bucket`, `model_weights_bucket` | Префикс ключа (`/uploads/{user_id}/...`) | Шардирование выполняется самим S3 на уровне префиксов ключа. Хорошо распределённые префиксы по `user_id` или `file_hash` дают равномерную нагрузку без hot partitions. |
 
    ### 6.4 Резервирование
    
-   | СУБД | Схема | Пояснение |
-   | ---- | ----- | --------- |
-   | PostgreSQL | Мастер + 2 слейва. Один слейв синхронный, другой асинхронный | Пишем в мастер, читаем с реплики. Записали в мастер, ждем ответа от синхронный реплики |
-   | Cassandra | Репликация без ведущего узла (Replication Factor = 3). Консистенция по QUORUM | Клиент отправляет запрос на запись одному узлу (ведущему), а СУБД берет на себя дублирование этой операции на всех остальных репликах. |
-   | Redis | Redis Cluster (мастер + реплика на каждый слот), мастер упадет, то автоматом переключимся на слейв |  Сохранение сессий |
-   | S3 | Георепликация между регионами | Если откажет один датацентр, ну ничего есть другой | 
+   | СУБД / БД | Схема резервирования | Формула | Пояснение |
+   |-----------|---------------------|---------|-----------|
+   | **PostgreSQL** (все 5 инстансов: `auth_db`, `billing_db`, `files_db`, `model_db`, `search_meta_db`) | Мастер + 1 синхронная реплика + 1 асинхронная реплика, разнесённые по 3 ДЦ | N+2 | Запись подтверждается мастером после fsync на синхронной реплике (`synchronous_commit=on`, `synchronous_standby_names`) — данные не теряются при падении мастера. Асинхронная реплика — для чтений и для disaster recovery в удалённом регионе. Failover через Patroni + etcd: автопереключение за 10–30 секунд. |
+   | **Cassandra — `chat_keyspace`** | Multi-master, Replication Factor = 3, Consistency Level = QUORUM (для write и read) | RF=3, кворум 2 из 3 | Каждая партиция реплицируется на 3 узла |
+   | **Redis** (все 5 инстансов: `auth_cache`, `quota_counters`, `chat_cache`, `model_cache`, `inf_cache`) | Redis Cluster: мастер + 1 реплика на каждый из 16384 hash slots, минимум 6 узлов на кластер (3 master + 3 replica) | N+1 на каждый slot | Реплики асинхронные — `WAIT` команда позволяет дождаться репликации при критичных операциях. При падении мастера sentinel-протокол кластера выбирает новую replica мастером за 5–15 секунд. Acceptable trade-off: возможна потеря последних миллисекунд write'ов — приемлемо для кешей и счётчиков (квоты восстанавливаются из PG через Quota Flusher). |
+   | **ClickHouse — `dwh_db`** | ReplicatedMergeTree, RF = 2, координация через ClickHouse Keeper | N+1 на каждый шард | Каждый шард имеет 2 реплики, координация через встроенный Keeper (Raft). Запись через Distributed-таблицу: данные шардируются и реплицируются прозрачно. При падении одной реплики чтения автоматически переключаются на другую. |
+   | **Qdrant — `vector_index`** | Replication Factor = 2 на каждый shard, Raft consensus | N+1 на каждый shard | Шарды реплицируются между узлами. Запись через Raft гарантирует консистентность HNSW-индексов между репликами. При падении узла поиск переключается на здоровую реплику автоматически. |
+   | **Elasticsearch — `fulltext_index`** | 1 primary + 1 replica на каждый shard, кросс-зональное размещение | N+1 на каждый shard | Master-eligible nodes — 3 штуки для quorum'а при выборах. Реплика принимает на себя поисковый трафик параллельно с primary, что также даёт scale-out на чтение. При падении primary реплика автоматически промоутится. |
+   | **S3** | Cross-region replication, 3 региона (US, EU, Азия) | N+2 | S3 внутри одного региона уже даёт хорошую durability за счёт хранения на 3+ зонах доступности. Cross-region replication защищает от регионального инцидента и даёт edge-доступ к весам моделей и пользовательским файлам из ближайшего ДЦ. |
+   | **Kafka** | `replication.factor=3`, `min.insync.replicas=2`, разнесены по 3 ДЦ | N+1 | Запись подтверждается после ack от 2 ISR-реплик из 3. Переживает падение одного брокера без потери сообщений и без downtime. Producer'ы используют `acks=all` для сохранности данных. |
    
    ### 6.5 Библиотеки для работы с БД
 
@@ -141,7 +181,7 @@
    | Cassandra | gocql | 
    | Redis | go-redis |
    | ClickHouse | clickhouse-go |
-   | S3 | minio-go |
+   | S3 | aws sdk |
    
 ## 7. Алгоритмы
 
@@ -193,7 +233,7 @@
 
    ## 10. Cхема проекта
 
-   <img width="4651" height="3442" alt="СХЕМА Проекта vers2" src="https://github.com/user-attachments/assets/228592d0-884d-46d9-836f-9858dc4013af" />
+   <img width="4652" height="3441" alt="СХЕМА Проекта vers3" src="https://github.com/user-attachments/assets/e14ea79b-dec4-445e-93fc-622c9b69a832" />
 
    ## 11. Список серверов
 
