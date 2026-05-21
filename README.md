@@ -235,6 +235,163 @@
 
    <img width="4652" height="3441" alt="СХЕМА Проекта vers3" src="https://github.com/user-attachments/assets/e14ea79b-dec4-445e-93fc-622c9b69a832" />
 
+   ### Auth Service Domain
+
+Домен отвечает за идентификацию и авторизацию пользователей и внешних API-клиентов. Хранит учётные записи, выпускает и валидирует сессионные токены, управляет жизненным циклом API-ключей с поддержкой rotation без downtime. Все запросы во все остальные сервисы предварительно проходят проверку авторизации через этот домен (Gateway вызывает Auth Service на каждом запросе).
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Auth Service (Go)** | Stateless-сервис аутентификации и авторизации. Регистрация и логин пользователей, валидация сессионных токенов, выпуск и проверка API-ключей. Делает write в PostgreSQL и read через Redis-кеш. Вызывается API Gateway на каждом запросе для проверки identity. |
+| **PostgreSQL (`auth_db`)** | OLTP-хранилище. Содержит таблицы `users` (учётные записи), `user_sessions` (refresh-токены), `api_clients` (приложения-разработчики), `api_keys` (хеши ключей, никогда не сами ключи), `api_sessions` (короткоживущие сессии API-вызовов). Шардирование по `user_id` для горизонтальной масштабируемости. |
+| **Redis (`auth_cache`)** | Hot-path кеш для проверки идентичности на каждом запросе. Хранит `session:{token_hash}` с TTL равным времени жизни сессии и `key_lookup:{key_hash}` для быстрой валидации API-ключа. При cache miss происходит fallback на PostgreSQL с последующим warm-up кеша. |
+
+---
+
+### Billing & Subscription Domain
+
+Домен управляет монетизацией: подписками, платежами, квотами и биллингом по токенам. Критически важен принцип real-time rate-limiting — пользователь, превысивший квоту, должен получить отказ в течение миллисекунд, а не через минуты ETL-пайплайна. Поэтому домен включает hot counters в Redis и периодический flusher для их персистентности.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Subscribe Service (Go)** | Управление подписками и платёжными методами. CRUD над тарифами, обработка callback'ов от платёжных шлюзов (Stripe, YooKassa, Apple Pay), активация/деактивация подписок, проверка квот перед запросом инференса. Эмитит события в `topic: token_billed` для аналитики. |
+| **PostgreSQL (`billing_db`)** | OLTP-хранилище финансовых данных с строгими ACID-гарантиями. Таблицы: `subscriptions`, `payment_methods` (токенизированные референсы на платёжный шлюз, не сырые данные карт), `invoices`, `usage_quotas` (персистентное состояние квот), `token_usage` (детализация per response, партиционирование по `billing_period`). |
+| **Redis (`quota_counters`)** | Hot counters для real-time rate-limiting. Хранит счётчики вида `usage:user:{id}:m:{minute}` (TTL 2 минуты), `usage:user:{id}:day:{date}` (TTL 48 часов), `quota:user:{id}` (закешированный лимит из PG). Атомарные операции `INCR`/`INCRBY` дают sub-millisecond latency при проверке. |
+| **Billing Aggregator** | Асинхронный воркер, запускается раз в сутки по cron. Читает таблицу `token_usage` за прошедший день, агрегирует по `user_id` и `billing_period`, генерирует записи в `invoices`. Отдельный сервис вынесен потому, что batch-агрегация миллиардов строк не должна блокировать OLTP-нагрузку Subscribe Service. |
+| **Quota Flusher** | Singleton-воркер (leader election через etcd), запускается каждые 30 секунд. Читает счётчики из Redis `quota_counters` и батчем обновляет `usage_quotas` в PostgreSQL для персистентности. Это решает проблему долговременного хранения квот без нагрузки PG на каждый INCR. |
+
+---
+
+### Chat Domain
+
+Сердце системы — хранилище и обработка диалогов между пользователем и моделью. Главные требования: write-heavy нагрузка (~2,6 млрд сообщений в день), append-only паттерн (никаких UPDATE на горячем пути), низкая latency стриминга ответа от GPU к клиенту. Чат-сервис принимает запрос, строит контекст для модели, ставит inference-задачу в очередь и поддерживает SSE-соединение с клиентом до завершения генерации ответа.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Chat Service (Go)** | Stateless-сервис обработки диалогов. Принимает пользовательское сообщение, строит `message_context` (история чата + RAG-чанки + system prompt), персистит сообщение и контекст в Cassandra, публикует задание в `topic: inference_requests`, открывает SSE-соединение с клиентом и подписывается на Redis pub/sub канал `stream:resp:{response_id}` для проброса токенов от vLLM обратно клиенту. |
+| **Cassandra (`chat_keyspace`)** | Wide-column хранилище под write-heavy append-only нагрузку. Таблицы: `chats` (партиция по `user_id`, сортировка по `last_activity_at DESC`), `user_messages` (партиция по `chat_id`, write-once), `assistant_responses` (партиция по `user_message_id`, поддержка версий для regenerate), `message_contexts` (снимок контекста для воспроизводимости), `search_snapshots` (результаты web-поиска для запроса). Replication Factor 3, Consistency Level QUORUM. |
+| **Redis (`chat_cache`)** | Два назначения. Первое — кеш контекстов сообщений (`ctx:msg:{user_message_id}` с TTL 1 час) для быстрой ре-генерации без повторного построения. Второе — pub/sub каналы (`stream:resp:{response_id}`) для стриминга токенов от vLLM-воркера к Chat Service в реальном времени. Использует sub-millisecond latency Redis для time-to-first-token < 200 мс. |
+| **Chat Summarizer** | Асинхронный воркер, запускается раз в час. Для чатов длиннее 50 сообщений генерирует сжатое резюме через специальную модель, обновляет поле `summary` в таблице `chats`. Это позволяет вместо отправки всей истории в модель отправлять резюме + последние K сообщений, экономя контекстное окно и токены. |
+
+---
+
+### Files & Attachments Domain
+
+Домен управляет пользовательскими вложениями: загрузка изображений, PDF, документов для подачи в модель. Имеет отличный от остальных доменов жизненный цикл — каждый файл проходит цепочку проверок и обработок: антивирусный скан, извлечение текста, GDPR-привязка к пользователю. Метаданные хранятся в PostgreSQL, бинарные блобы — в S3, что разгружает основные СУБД.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **File Service (Go)** | Управление загрузкой и доступом к файлам. Выдаёт presigned URL клиенту для прямой загрузки в S3 (минуя backend для эффективности), регистрирует метаданные в `user_attachments`, ставит задачу на AV-скан в Kafka, возвращает download-URL по запросу с проверкой прав доступа. |
+| **PostgreSQL (`files_db`)** | OLTP-метаданные. Таблицы: `user_attachments` (имя, размер, MIME, SHA-256 для дедупликации, `av_scan_status`, `expires_at` для GDPR), `av_scan_results` (детальные результаты антивирусной проверки). Шардирование по `user_id` — все файлы пользователя на одном шарде для list-операций и удаления. |
+| **S3 (`user_uploads_bucket`)** | Объектное хранилище для блобов файлов. Префиксы: `/uploads/{user_id}/{file_hash}` для оригинальных файлов, `/extracted/{file_hash}/text.txt` для извлечённого текста PDF/DOCX. Cross-region replication для георезервирования. |
+| **AV Scanner** | Асинхронный воркер на основе ClamAV. Читает задания из `topic: av_scan_queue`, скачивает файл из S3, проверяет по hash-базе сигнатур и эвристическому анализу, обновляет `av_scan_status` в PG. Файлы со статусом `infected` помечаются на удаление и блокируются для скачивания. |
+| **Text Extractor** | Асинхронный воркер на основе Apache Tika. Запускается после успешного AV-скана. Извлекает текст из PDF, DOCX, PPTX, поддерживает OCR для сканов через интеграцию с Tesseract. Сохраняет результат в S3 в директорию `/extracted/`, обновляет метаданные в PG. Извлечённый текст используется Chat Service для построения контекста сообщений с вложениями. |
+
+---
+
+### Search Domain
+
+Домен полнотекстового и семантического поиска по истории чатов пользователя. Простой LIKE-запрос по миллиардам сообщений невозможен, поэтому используется двухуровневая стратегия: Elasticsearch для точных совпадений ключевых слов и Qdrant для семантического поиска по эмбеддингам. Метаданные эмбеддингов отделены от самих векторов для удобства operational-задач (переиндексация, миграция между моделями эмбеддингов).
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Search Service (Go)** | API поиска. Принимает запрос пользователя, параллельно опрашивает Elasticsearch (full-text) и Qdrant (semantic) с фильтром `user_id`, мерджит результаты с reranking, возвращает топ-N с подсветкой совпадений. Используется также внутренне Chat Service для RAG-инъекций — поиск релевантных кусков из истории для подмешивания в контекст. |
+| **PostgreSQL (`search_meta_db`)** | Метаданные индексации. Таблицы: `message_embeddings` (для каждого сообщения — какой моделью посчитан вектор, в какой коллекции Qdrant лежит, какой point_id), `search_index_jobs` (очередь индексации со статусами для retry и аудита). Не enforced FK на `chat_keyspace.user_messages` — это логическая ссылка между разными хранилищами. |
+| **Qdrant (`vector_index`)** | Векторная БД с HNSW-индексом. Collection `msg_embeddings` (vector_dim=1536), шардирование по `user_id` для filtered queries без fan-out. HNSW параметры M=16, ef_construct=200 дают recall@10 ≈ 98% при P99 latency 5–15 мс на шарде. Hot tier хранит последние 90 дней, более старые эмбеддинги вытесняются в S3 cold storage. |
+| **Elasticsearch (`fulltext_index`)** | Inverted index Lucene. Индексы по месяцам (`messages-YYYY-MM`), routing по `user_id` для направления запроса на один shard. Поддерживает fuzzy matching, синонимы, подсветку результатов. Старые месячные индексы (>6 месяцев) переводятся в frozen tier для экономии. |
+| **Search Indexer** | Асинхронный воркер. Читает задания из `topic: search_index_jobs`, вызывает Embedding Worker для расчёта вектора нового сообщения, параллельно записывает: вектор → Qdrant, текст → Elasticsearch, метаданные → PostgreSQL. Обновляет статус задания в `search_index_jobs`. Поддерживает retry при сбоях downstream-сервисов. |
+| **Embedding Worker (Python + ONNX Runtime)** | Воркер расчёта эмбеддингов через модель `text-embedding-3-small`. Использует ONNX Runtime на CPU — для batch inference эмбеддингов это дешевле GPU. Обрабатывает batch'и до 1000 документов одновременно, throughput ~50 тысяч документов в секунду на узел. |
+
+---
+
+### Model Registry Domain
+
+Домен управления жизненным циклом моделей. Реализует трёхуровневую иерархию: семейство (что выбирает пользователь, например GPT-4o) → версия (конкретный checkpoint, immutable после релиза) → deployment (runtime-привязка версии к пулу GPU с traffic_weight для canary). Каждый ответ ассистента ссылается на конкретный `model_version_id` для аудита и воспроизводимости. Отдельная подсистема fine-tuning'а позволяет enterprise-клиентам обучать персональные LoRA-адаптеры.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Model Registry (Go)** | Управление каталогом моделей. CRUD над семействами, версиями, deployments. Принимает запросы на fine-tuning от пользователей, регистрирует задания в `fine_tuning_jobs` и публикует событие в `topic: training_jobs`. Управляет canary-выкаткой новых версий через изменение `traffic_weight` в `model_deployments`. Эмитит invalidation-события в Redis pub/sub `model_config_changed` при изменении конфигурации. |
+| **PostgreSQL (`model_db`)** | OLTP-каталог. Таблицы: `model_families` (gpt-4o, gpt-4, gpt-3.5-turbo и т. д.), `model_versions` (конкретные checkpoints с ссылками на веса в S3), `model_deployments` (runtime-привязки с traffic_weight), `fine_tuning_jobs` (статусы задач обучения), `training_datasets` (версионированные датасеты для воспроизводимости). Объём данных мал — десятки тысяч строк, без шардирования, полная репликация. |
+| **Redis (`model_cache`)** | Read-through кеш для горячего чтения конфигурации. Inference Scheduler читает `model:deployments:active` на каждый запрос — без кеша это создало бы 90 тыс. RPS на PostgreSQL. Ключи: `model:family:{code}`, `model:version:{id}`, `model:deployments:active` с TTL 30–60 секунд. Invalidation через pub/sub при изменении в Registry. |
+| **S3 (`model_weights_bucket`)** | Объектное хранилище весов. Префиксы: `/weights/{version_id}/` для полных весов базовых моделей (~1,5 ТБ на checkpoint), `/lora/{version_id}/` для LoRA-адаптеров fine-tuned моделей (~50–500 МБ), `/datasets/{dataset_id}/` для training-датасетов. Cross-region replication для возможности горячей загрузки весов в любой GPU-кластер. |
+
+---
+
+### Inference Domain
+
+Домен исполнения LLM-инференса на GPU. Принципиально вынесен из Kubernetes на bare-metal — для GPU критичен прямой доступ к железу и сети InfiniBand 100 Гбит/с между узлами для тензор-параллелизма больших моделей. Использует vLLM с PagedAttention для эффективного управления KV-cache и continuous batching для увеличения throughput.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Inference Scheduler (Go)** | Stateless-сервис маршрутизации inference-запросов. Читает задания из `topic: inference_requests`, для каждого: получает список активных deployments из Redis (`model_cache`), применяет consistent hashing по `chat_id` для sticky-routing (переиспользование warm KV-cache), выбирает deployment с учётом `traffic_weight` (canary), отправляет запрос на vLLM-воркер по gRPC. Логирует выбранный `model_deployment_id` в Cassandra для audit trail. |
+| **Redis (`inf_cache`)** | Internal-кеш Inference Scheduler'а. Хранит `prefix_cache:{prompt_hash}` — закешированные KV-cache для часто встречающихся системных промптов (значительно ускоряет prefill-фазу при повторном использовании одного и того же system prompt'а), а также `deployment_config` для runtime-параметров. |
+| **vLLM Pool 1 (gpt-4o production)** | Основной production-пул GPU-узлов с моделью GPT-4o. Каждый узел — 8× NVIDIA A100 80GB SXM с InfiniBand. Использует PagedAttention для эффективного управления KV-cache (снижение фрагментации в 4 раза), continuous batching для увеличения throughput в 3–8 раз vs naive batching. Получает 95% production-трафика. |
+| **vLLM Pool 2 (gpt-4o canary)** | Канареечный пул для новых версий GPT-4o. Получает 5% трафика для проверки регрессий перед полным выкатыванием. При обнаружении проблем `traffic_weight` устанавливается в 0, и трафик мгновенно возвращается на Pool 1. |
+| **vLLM Pool 3 (gpt-3.5-turbo)** | Cheap tier для дешёвого/быстрого инференса. Используется для бесплатных пользователей, для simple-запросов, для генерации заголовков чатов и других вспомогательных задач. |
+
+---
+
+### Training & Fine-tuning Domain
+
+Полностью изолированная инфраструктура обучения и дообучения моделей. Изоляция от inference критична: training — это batch-нагрузка с длительностью часы и дни, нельзя позволять ей конкурировать за GPU с inference, у которого жёсткие SLO. Использует отдельный GPU-пул, отдельный scheduler, отдельный queue. После успешного прохождения evaluation новая версия автоматически попадает в Model Registry и через canary раскатывается в production.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Training Scheduler** | Управляет очередью заданий обучения. Читает из `topic: training_jobs`, выделяет свободные GPU-слоты из training-пула (отдельного от inference), запускает Fine-tune Worker, отслеживает прогресс, обновляет `fine_tuning_jobs.status` в `model_db`. Поддерживает приоритеты для enterprise-клиентов и cancellation запущенных задач. |
+| **Fine-tune Workers** | GPU-воркеры обучения. Загружают базовую модель из `model_weights_bucket`, тренировочный датасет из `training_datasets`, выполняют LoRA fine-tuning (Low-Rank Adaptation — обучается не вся модель, а маленький адаптер ~50–500 МБ, что в 100 раз дешевле полного обучения). Сохраняют веса LoRA в S3, регистрируют новую версию в Model Registry. |
+| **Evaluation Suite** | Сервис автоматической проверки качества свежеобученной модели. Прогоняет batch стандартных бенчмарков (MMLU, HumanEval) и внутренний eval-сет, сравнивает с baseline. При прохождении порогов качества переводит `model_version.status` из `staging` в `production` и инициирует canary-деплой через Model Registry. При регрессии — помечает версию как `failed` и не допускает в production. |
+
+---
+
+### Analytics / DWH Domain
+
+Домен сырых событий и аналитики. Реализован по принципу event sourcing: ClickHouse принимает только append-only события, никаких UPDATE и счётчиков. Все агрегаты считаются аналитиками на лету через GROUP BY поверх миллиардов строк — это и есть назначение колоночных СУБД. Объём — около 2,5 ТБ событий в сутки, retention 5 лет с переходом старых партов на cold storage.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **ClickHouse (`dwh_db`)** | Колоночное OLAP-хранилище. Таблицы: `dwh_session_events` (логин, логаут, рефреш токена), `dwh_chat_events` (создание/архивирование/удаление чатов), `dwh_message_events` (отправка сообщений, генерация ответов, regenerate, ~3 млрд событий в сутки), `dwh_token_events` (биллинговые события для AggregatingMergeTree materialized view'ов), `dwh_click_events` (UX-аналитика: thumbs up/down, copy, share). Партиционирование по дням или месяцам, сжатие LZ4HC. |
+| **DWH Ingester** | Асинхронный воркер. Читает события из Kafka-топиков `dwh_ingest` и `token_billed`, батчит по 10 тысяч событий каждые 5 секунд, делает массовую вставку в соответствующие таблицы ClickHouse. Батчинг критичен — мелкие insert'ы в ClickHouse создают много партов и замедляют merge'и. |
+
+---
+
+### Edge & API Gateway Domain
+
+Внешний периметр системы. Принимает весь входящий трафик, защищает от DDoS, выполняет TLS termination, маршрутизирует запросы по доменным сервисам, применяет глобальные политики (аутентификация, rate limiting, квоты). API Gateway сам не имеет своей БД — это полностью stateless-слой, опирающийся на кеши других сервисов.
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Cloudflare** | Edge-слой с Anycast-маршрутизацией на ближайший дата-центр, WAF, защитой от DDoS, edge-кешированием статики (~30–40% запросов не доходят до бэкенда). Также делает геолокационную маршрутизацию для соблюдения требований data residency. |
+| **L4 Balancer (LVS)** | Уровень транспортной балансировки. Алгоритм least-connection, режим Direct Server Return (ответ от backend идёт клиенту напрямую, минуя балансировщик — снижает нагрузку на L4 в 5–10 раз). Распределяет TCP-соединения между пулом Nginx-узлов. |
+| **L7 Balancer (Nginx)** | Уровень прикладной балансировки. TLS termination (внутри кластера трафик идёт по HTTP без шифрования для производительности), HTTP/2, mTLS для API-tier (взаимная аутентификация для enterprise-клиентов). Маршрутизация по hostname'ам и path'ам на соответствующие upstream'ы. |
+| **API Gateway (Go)** | Stateless-сервис единой точки входа. На каждом запросе: проверяет аутентификацию через Auth Service (lookup в `auth_cache`), применяет rate limiting через `quota_counters` в Redis, проверяет квоту по токенам через Subscribe Service, маршрутизирует запрос на соответствующий доменный сервис (Chat, Search, File). Не имеет собственной БД — все данные хранятся в кешах других доменов. |
+
+---
+
+### Event Backbone (Kafka)
+
+Не отдельный домен, а cross-cutting инфраструктура, развязывающая синхронный, ML и асинхронный контуры обработки. Каждый топик имеет одного primary consumer'а (single responsibility) и партиционируется под характер нагрузки. Replication factor 3, min.insync.replicas 2 для durability.
+
+| Топик | Producer'ы | Consumer | Партиционирование |
+|-------|-----------|----------|-------------------|
+| `inference_requests` | Chat Service | Inference Scheduler | по `chat_id` — гарантирует FIFO в рамках чата и sticky-routing на warm GPU |
+| `dwh_ingest` | Chat Service, vLLM, Auth Service | DWH Ingester | по `event_type` — параллельная обработка разных типов событий |
+| `token_billed` | vLLM, Subscribe Service | DWH Ingester | по `user_id` — co-location событий пользователя для агрегации |
+| `search_index_jobs` | Chat Service | Search Indexer | по `user_id` — равномерное распределение нагрузки индексации |
+| `av_scan_queue` | File Service | AV Scanner | по `user_id` |
+| `training_jobs` | Model Registry | Training Scheduler | round-robin (заданий мало, важна параллельность) |
+| `token_stream_fallback` | vLLM | Chat Service | по `chat_id` — резервный канал стриминга при недоступности Redis |
+
+---
+
+### Observability Domain
+
+Cross-cutting инфраструктура наблюдаемости. Не имеет собственных бизнес-данных, но критически важна для эксплуатации highload-системы. Все сервисы экспортируют метрики (Prometheus), логи (через stdout, собираются Fluent Bit), и trace'ы (через OpenTelemetry SDK в Jaeger).
+
+| Компонент | Назначение |
+|-----------|------------|
+| **Prometheus** | Time-series база метрик. Pull-модель: scraper'ы каждые 15 секунд опрашивают `/metrics` endpoint'ы всех сервисов. Хранит метрики 30 дней локально, долговременная аналитика — через remote_write в долгое S3-storage (Thanos/Mimir). |
+| **Grafana** | Визуализация. Дашборды по группам сервисов, бизнес-метрики (Tokens Per Second, MAU, активные подписки), SLO-индикаторы. Alerting через Prometheus AlertManager в Slack/PagerDuty. |
+| **Jaeger** | Distributed tracing. Каждый входящий запрос получает trace_id, который пробрасывается через все downstream-вызовы (Gateway → Chat → Kafka → Scheduler → vLLM). Позволяет визуализировать полный путь запроса и находить bottlenecks. Sampling 1% для production-трафика, 100% для error-traces. |
+
    ## 11. Список серверов
 
 ### 11.1 Модель развёртывания
